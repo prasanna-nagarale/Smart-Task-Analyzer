@@ -1,1 +1,56 @@
- 
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Smart Task Analyzer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Smart Task Analyzer</h1>
+
+    <section class="input-card">
+      <h2>Add Task</h2>
+      <form id="task-form">
+        <input id="title" placeholder="Title" required />
+        <input id="due_date" type="date" />
+        <input id="estimated_hours" type="number" min="0" step="0.5" placeholder="Estimated hours" />
+        <input id="importance" type="number" min="1" max="10" value="5" placeholder="Importance (1-10)" />
+        <input id="dependencies" placeholder="Dependencies (comma separated ids)" />
+        <button type="button" id="add-task">Add to list</button>
+      </form>
+
+      <h3>Bulk JSON</h3>
+      <textarea id="bulk-json" placeholder='[{"id":"t1","title":"Fix bug","due_date":"2025-11-30","estimated_hours":3,"importance":8}]'></textarea>
+
+      <div class="controls">
+        <label for="strategy">Strategy:</label>
+        <select id="strategy">
+          <option value="smart">Smart Balance</option>
+          <option value="fastest">Fastest Wins</option>
+          <option value="high_impact">High Impact</option>
+          <option value="deadline">Deadline Driven</option>
+        </select>
+        <button id="analyze">Analyze Tasks</button>
+        <button id="suggest">Suggest Top 3</button>
+      </div>
+
+      <div id="local-list">
+        <h3>Local Tasks</h3>
+        <ol id="task-list"></ol>
+        <button id="clear-list">Clear</button>
+      </div>
+
+      <div id="messages"></div>
+    </section>
+
+    <section class="output-card">
+      <h2>Results</h2>
+      <div id="results"></div>
+    </section>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
