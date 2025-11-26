@@ -157,9 +157,3 @@ Tests cover priority ordering, past-due task handling, and circular dependency d
 **Testing:** Django's built-in test framework
 
 ---
-
-## 📝 Notes
-
-This project was built with a focus on clean code, thoughtful algorithm design, and practical usability. The scoring system balances multiple competing factors in a way that feels intuitive while being mathematically sound. I'm happy to discuss any design decisions or walk through the implementation in detail.
-
-Thanks for reviewing my submission!
