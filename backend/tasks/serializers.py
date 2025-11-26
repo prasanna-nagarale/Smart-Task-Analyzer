@@ -2,73 +2,73 @@
 import json
 from datetime import datetime
 
-def validate_tasks_list(data):
+def validate_tasks_payload(payload):
     """
-    Expect: {"strategy": "smart", "tasks": [ {...}, ... ] }
-    Returns: (tasks_list, errors)
+    Validates incoming request {
+        "strategy": "...",
+        "tasks": []
+    }
     """
-    if not isinstance(data, dict):
-        return None, "Expected JSON object with 'tasks' key."
+    if not isinstance(payload, dict):
+        return None, "Payload must be a JSON object"
 
-    tasks = data.get("tasks")
-    if tasks is None:
-        return None, "'tasks' key missing."
+    if "tasks" not in payload:
+        return None, "'tasks' field missing"
+
+    tasks = payload["tasks"]
     if not isinstance(tasks, list):
-        return None, "'tasks' must be a list."
+        return None, "'tasks' must be a list"
 
-    validated = []
+    cleaned = []
     errors = []
+
     for idx, t in enumerate(tasks):
         if not isinstance(t, dict):
-            errors.append(f"task at index {idx} is not an object")
+            errors.append(f"Task at index {idx} must be an object")
             continue
-        # simple field fixes
-        title = t.get("title") or t.get("name") or f"Task {idx}"
-        importance = t.get("importance", 5)
+
+        title = t.get("title", f"Task {idx}")
+
+        imp = t.get("importance", 5)
         try:
-            importance = int(importance)
-            if importance < 1 or importance > 10:
-                raise ValueError()
-        except Exception:
-            importance = 5
-            errors.append(f"task {title}: invalid importance; defaulting to 5")
+            imp = int(imp)
+            if not (1 <= imp <= 10):
+                raise ValueError
+        except:
+            errors.append(f"{title}: invalid importance, defaulting to 5")
+            imp = 5
 
         est = t.get("estimated_hours", 1)
         try:
             est = float(est)
             if est < 0:
-                raise ValueError()
-        except Exception:
-            est = 1.0
-            errors.append(f"task {title}: invalid estimated_hours; defaulting to 1")
+                raise ValueError
+        except:
+            est = 1
+            errors.append(f"{title}: invalid estimated hours, defaulting to 1")
 
         due = t.get("due_date")
         if due:
             try:
-                # accept ISO date
                 datetime.fromisoformat(due)
-            except Exception:
-                # try yyyy-mm-dd
-                try:
-                    datetime.strptime(due, "%Y-%m-%d")
-                except Exception:
-                    errors.append(f"task {title}: invalid due_date format; setting to None")
-                    due = None
+            except:
+                errors.append(f"{title}: invalid date, setting to None")
+                due = None
 
         deps = t.get("dependencies", [])
-        if deps is None:
-            deps = []
-        # ensure list
-        if not isinstance(deps, list):
-            deps = [deps]
+        if isinstance(deps, str):
+            try:
+                deps = json.loads(deps)
+            except:
+                deps = [deps]
 
-        validated.append({
+        cleaned.append({
             "id": t.get("id"),
             "title": title,
             "due_date": due,
+            "importance": imp,
             "estimated_hours": est,
-            "importance": importance,
             "dependencies": deps,
         })
 
-    return validated, errors
+    return cleaned, errors

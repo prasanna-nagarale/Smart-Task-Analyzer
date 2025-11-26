@@ -1,8 +1,7 @@
-# backend/tasks/urls.py
 from django.urls import path
-from . import views
+from .views import analyze_view, suggest_view
 
 urlpatterns = [
-    path("analyze/", views.analyze_view, name="tasks-analyze"),
-    path("suggest/", views.suggest_view, name="tasks-suggest"),
+    path("analyze/", analyze_view),
+    path("suggest/", suggest_view),
 ]

@@ -1,143 +1,379 @@
-// frontend/script.js
-const taskList = [];
-const taskListEl = document.getElementById("task-list");
-const messagesEl = document.getElementById("messages");
-const resultsEl = document.getElementById("results");
+let tasks = [];
+let currentResults = [];
 
-function showMessage(msg, isError=false){
-  messagesEl.textContent = msg;
-  messagesEl.style.color = isError ? "#ffb3b3" : "#bfffc4";
-  setTimeout(()=> { messagesEl.textContent = ""; }, 6000);
+const listEl = document.getElementById("task-list");
+const msgEl = document.getElementById("messages");
+const resEl = document.getElementById("results");
+const countEl = document.getElementById("task-count");
+const strategySelect = document.getElementById("strategy");
+const strategyInfo = document.getElementById("strategy-info");
+const matrixViewCheckbox = document.getElementById("matrix-view");
+
+// ==================== STRATEGY DESCRIPTIONS ====================
+const STRATEGY_DESCRIPTIONS = {
+    smart: "Optimally weighs urgency, importance, effort, and dependencies for well-rounded prioritization.",
+    fastest: "Prioritizes low-effort tasks for quick wins and momentum building.",
+    high_impact: "Focuses on high-importance tasks regardless of urgency or effort.",
+    deadline: "Emphasizes due dates and past-due tasks to meet deadlines."
+};
+
+// ==================== HELPERS ====================
+function showMsg(msg, isError = false) {
+    msgEl.textContent = msg;
+    msgEl.className = `message show ${isError ? 'error' : 'success'}`;
+    setTimeout(() => {
+        msgEl.classList.remove('show');
+    }, 5000);
 }
 
-function renderLocalList(){
-  taskListEl.innerHTML = "";
-  taskList.forEach((t, idx) => {
-    const li = document.createElement("li");
-    li.className = "task-item";
-    li.innerHTML = `<div><strong>${t.title}</strong><br><small>${t.due_date || "no due"} • ${t.estimated_hours}h • imp ${t.importance}</small></div>
-      <div><button data-idx="${idx}" class="remove-btn">Remove</button></div>`;
-    taskListEl.appendChild(li);
-  });
-  document.querySelectorAll(".remove-btn").forEach(b=>{
-    b.onclick = e=>{
-      const idx = parseInt(e.target.dataset.idx);
-      taskList.splice(idx,1);
-      renderLocalList();
-    }
-  });
+function updateTaskCount() {
+    countEl.textContent = tasks.length;
 }
 
-document.getElementById("add-task").onclick = ()=>{
-  const title = document.getElementById("title").value.trim();
-  if(!title){ showMessage("Title required", true); return; }
-  const due_date = document.getElementById("due_date").value || null;
-  const estimated_hours = parseFloat(document.getElementById("estimated_hours").value || 1);
-  const importance = parseInt(document.getElementById("importance").value || 5);
-  const deps_raw = document.getElementById("dependencies").value.trim();
-  const dependencies = deps_raw ? deps_raw.split(",").map(s=>s.trim()).filter(Boolean) : [];
-  const id = `t${Date.now()}_${Math.floor(Math.random()*999)}`;
-  taskList.push({id, title, due_date, estimated_hours, importance, dependencies});
-  renderLocalList();
-  document.getElementById("task-form").reset();
-}
-
-document.getElementById("clear-list").onclick = ()=>{
-  taskList.length = 0;
-  renderLocalList();
-}
-
-async function postAnalyze(payload, endpoint="/api/tasks/analyze/"){
-  resultsEl.innerHTML = "<p>Loading...</p>";
-  try{
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
-    });
-    if(!res.ok){
-      const txt = await res.text();
-      showMessage("Server error: " + txt, true);
-      resultsEl.innerHTML = "";
-      return null;
-    }
-    const data = await res.json();
-    return data;
-  } catch(e){
-    showMessage("Network error", true);
-    resultsEl.innerHTML = "";
-    return null;
-  }
-}
-
-function renderResults(tasks){
-  if(!tasks.length){ resultsEl.innerHTML = "<p>No tasks returned.</p>"; return; }
-  resultsEl.innerHTML = "";
-  tasks.forEach(t=>{
-    const div = document.createElement("div");
-    div.className = "result-card";
-    const badgeClass = t.priority === "High" ? "badge high" : t.priority === "Medium" ? "badge medium" : "badge low";
-    div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
-      <div><strong>${t.title}</strong><br><small>${t.due_date || "No due date"} • ${t.estimated_hours}h • imp ${t.importance}</small></div>
-      <div style="text-align:right"><span class="${badgeClass}">${t.priority}</span><div style="font-weight:700">${Math.round(t.score*100)}</div></div>
-    </div>
-    <p style="margin:8px 0"><small>${t.explanation}</small></p>
-    <p style="margin:0"><small>Components: U:${t.components.urgency} I:${t.components.importance} E:${t.components.effort} D:${t.components.dependency}</small></p>`;
-    resultsEl.appendChild(div);
-  });
-}
-
-document.getElementById("analyze").onclick = async ()=>{
-  let payload = null;
-  const bulk = document.getElementById("bulk-json").value.trim();
-  if(bulk){
-    try{
-      const parsed = JSON.parse(bulk);
-      if(Array.isArray(parsed)){
-        payload = {strategy: document.getElementById("strategy").value, tasks: parsed};
-      } else if (parsed && parsed.tasks){
-        payload = parsed;
-      } else {
-        showMessage("Bulk JSON must be an array of tasks or {tasks: [...]}", true);
+function renderTasks() {
+    listEl.innerHTML = "";
+    
+    if (tasks.length === 0) {
+        listEl.innerHTML = '<li style="text-align: center; color: #a0a8b8; padding: 20px;">No tasks added yet</li>';
+        updateTaskCount();
         return;
-      }
-    } catch(e){
-      showMessage("Invalid JSON in bulk area", true);
-      return;
     }
-  } else {
-    if(taskList.length===0){ showMessage("Add tasks or paste JSON", true); return; }
-    payload = {strategy: document.getElementById("strategy").value, tasks: taskList};
-  }
-  const data = await postAnalyze(payload, "/api/tasks/analyze/");
-  if(!data) return;
-  if(data.validation_warnings && data.validation_warnings.length){
-    showMessage("Validation warnings: " + data.validation_warnings.join("; "), true);
-  }
-  if(data.warnings && data.warnings.length){
-    showMessage("Warnings: " + data.warnings.join("; "), true);
-  }
-  renderResults(data.tasks);
+    
+    tasks.forEach((t, i) => {
+        const li = document.createElement("li");
+        li.className = "task-item";
+        li.innerHTML = `
+            <span>
+                <b>${t.title}</b> • 
+                ${t.estimated_hours}h • 
+                Importance: ${t.importance}/10
+                ${t.due_date ? ` • Due: ${t.due_date}` : ''}
+            </span>
+            <button onclick="removeTask(${i})">✕</button>
+        `;
+        listEl.appendChild(li);
+    });
+    
+    updateTaskCount();
 }
 
-document.getElementById("suggest").onclick = async ()=>{
-  let tasksArr = null;
-  const bulk = document.getElementById("bulk-json").value.trim();
-  if(bulk){
-    try{ tasksArr = JSON.parse(bulk); } catch(e){ showMessage("Invalid bulk JSON", true); return; }
-  } else {
-    if(taskList.length===0){ showMessage("Add tasks or paste JSON", true); return; }
-    tasksArr = taskList;
-  }
-  // POST to suggest endpoint (server also supports GET with urlencoded param)
-  const payload = {strategy: document.getElementById("strategy").value, tasks: tasksArr};
-  const data = await postAnalyze(payload, "/api/tasks/suggest/");
-  if(!data) return;
-  if(data.validation_warnings && data.validation_warnings.length){
-    showMessage("Validation warnings: " + data.validation_warnings.join("; "), true);
-  }
-  if(data.warnings && data.warnings.length){
-    showMessage("Warnings: " + data.warnings.join("; "), true);
-  }
-  renderResults(data.suggestions || []);
+function removeTask(i) {
+    tasks.splice(i, 1);
+    renderTasks();
+    showMsg("Task removed");
 }
+
+// ==================== STRATEGY INFO UPDATE ====================
+strategySelect.addEventListener('change', () => {
+    const strategy = strategySelect.value;
+    strategyInfo.querySelector('p').innerHTML = `<strong>${strategySelect.options[strategySelect.selectedIndex].text.split(' ')[1]}:</strong> ${STRATEGY_DESCRIPTIONS[strategy]}`;
+});
+
+// ==================== ADD TASK ====================
+document.getElementById("add-task").onclick = () => {
+    const title = document.getElementById("title").value.trim();
+    
+    if (!title) {
+        showMsg("❌ Task title is required", true);
+        return;
+    }
+
+    const dueDate = document.getElementById("due").value || null;
+    const hours = parseFloat(document.getElementById("hours").value) || 1;
+    const importance = parseInt(document.getElementById("importance").value) || 5;
+    const depsInput = document.getElementById("deps").value.trim();
+    
+    const deps = depsInput ? depsInput.split(",").map(x => x.trim()).filter(Boolean) : [];
+
+    tasks.push({
+        id: "task_" + Date.now(),
+        title,
+        due_date: dueDate,
+        estimated_hours: hours,
+        importance,
+        dependencies: deps
+    });
+
+    renderTasks();
+    showMsg("✅ Task added successfully!");
+    
+    // Clear form
+    document.getElementById("title").value = "";
+    document.getElementById("due").value = "";
+    document.getElementById("hours").value = "1";
+    document.getElementById("importance").value = "5";
+    document.getElementById("deps").value = "";
+};
+
+// ==================== CLEAR TASKS ====================
+document.getElementById("clear").onclick = () => {
+    if (tasks.length === 0) {
+        showMsg("⚠️ No tasks to clear", true);
+        return;
+    }
+    
+    if (confirm("Are you sure you want to clear all tasks?")) {
+        tasks = [];
+        renderTasks();
+        showMsg("🗑️ All tasks cleared");
+    }
+};
+
+// ==================== ANALYZE TASKS ====================
+document.getElementById("analyze").onclick = async () => {
+    const analyzeBtn = document.getElementById("analyze");
+    const btnText = analyzeBtn.querySelector(".btn-text");
+    const spinner = analyzeBtn.querySelector(".spinner");
+    
+    let payload = null;
+    const json = document.getElementById("json-input").value.trim();
+
+    if (json) {
+        try {
+            const parsedTasks = JSON.parse(json);
+            payload = {
+                strategy: strategySelect.value,
+                tasks: parsedTasks
+            };
+        } catch {
+            showMsg("❌ Invalid JSON format", true);
+            return;
+        }
+    } else if (tasks.length > 0) {
+        payload = {
+            strategy: strategySelect.value,
+            tasks
+        };
+    } else {
+        showMsg("⚠️ Please add tasks or paste JSON", true);
+        return;
+    }
+
+    // Loading state
+    analyzeBtn.disabled = true;
+    btnText.style.display = "none";
+    spinner.style.display = "inline-block";
+
+    try {
+        const res = await fetch("http://127.0.0.1:8000/api/tasks/analyze/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        
+        if (!res.ok) {
+            showMsg(`❌ Error: ${data.error || "Failed to analyze tasks"}`, true);
+            return;
+        }
+
+        currentResults = data.tasks;
+        renderResults(currentResults);
+
+        if (data.warnings && data.warnings.length) {
+            showMsg(`⚠️ ${data.warnings.join("; ")}`, true);
+        } else {
+            showMsg("✅ Analysis complete!");
+        }
+
+        if (data.validation_warnings && data.validation_warnings.length) {
+            console.warn("Validation warnings:", data.validation_warnings);
+        }
+        
+    } catch (error) {
+        showMsg("❌ Network error. Is the server running?", true);
+        console.error(error);
+    } finally {
+        // Reset button
+        analyzeBtn.disabled = false;
+        btnText.style.display = "inline";
+        spinner.style.display = "none";
+    }
+};
+
+// ==================== SUGGEST TOP 3 ====================
+document.getElementById("suggest").onclick = async () => {
+    const suggestBtn = document.getElementById("suggest");
+    const btnText = suggestBtn.querySelector(".btn-text");
+    const spinner = suggestBtn.querySelector(".spinner");
+    
+    if (tasks.length === 0) {
+        showMsg("⚠️ Please add tasks first", true);
+        return;
+    }
+
+    const payload = {
+        strategy: strategySelect.value,
+        tasks
+    };
+
+    // Loading state
+    suggestBtn.disabled = true;
+    btnText.style.display = "none";
+    spinner.style.display = "inline-block";
+
+    try {
+        const res = await fetch("http://127.0.0.1:8000/api/tasks/suggest/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        
+        if (!res.ok) {
+            showMsg(`❌ Error: ${data.error || "Failed to get suggestions"}`, true);
+            return;
+        }
+
+        currentResults = data.suggestions;
+        renderResults(currentResults);
+
+        if (data.warnings && data.warnings.length) {
+            showMsg(`⚠️ ${data.warnings.join("; ")}`, true);
+        } else {
+            showMsg("✨ Top 3 suggestions ready!");
+        }
+        
+    } catch (error) {
+        showMsg("❌ Network error. Is the server running?", true);
+        console.error(error);
+    } finally {
+        // Reset button
+        suggestBtn.disabled = false;
+        btnText.style.display = "inline";
+        spinner.style.display = "none";
+    }
+};
+
+// ==================== RENDER RESULTS ====================
+function renderResults(list) {
+    if (matrixViewCheckbox.checked) {
+        renderMatrixView(list);
+        return;
+    }
+    
+    renderListView(list);
+}
+
+function renderListView(list) {
+    resEl.innerHTML = "";
+
+    if (!list || !list.length) {
+        resEl.innerHTML = '<div class="empty-state"><p>👆 Add tasks and click "Analyze" to see prioritized results</p></div>';
+        return;
+    }
+
+    list.forEach((t, index) => {
+        const div = document.createElement("div");
+        div.className = `result-card ${t.priority.toLowerCase()}`;
+
+        const rankEmoji = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "📌";
+
+        div.innerHTML = `
+            <h3>
+                ${rankEmoji} ${t.title}
+                <span class="badge ${t.priority.toLowerCase()}">${t.priority}</span>
+            </h3>
+            <p><b>Priority Score:</b> ${(t.score * 100).toFixed(1)}%</p>
+            <p><b>Analysis:</b> ${t.explanation}</p>
+            ${t.in_cycle ? '<p style="color: #ff6b6b;">⚠️ <b>Warning:</b> Part of circular dependency</p>' : ''}
+            <small>
+                🎯 Urgency: ${(t.components.urgency * 100).toFixed(0)}% • 
+                💎 Importance: ${(t.components.importance * 100).toFixed(0)}% • 
+                ⚡ Effort: ${(t.components.effort * 100).toFixed(0)}% • 
+                🔗 Dependency: ${(t.components.dependency * 100).toFixed(0)}%
+            </small>
+        `;
+
+        resEl.appendChild(div);
+    });
+}
+
+// ==================== EISENHOWER MATRIX VIEW ====================
+function renderMatrixView(list) {
+    resEl.innerHTML = "";
+
+    if (!list || !list.length) {
+        resEl.innerHTML = '<div class="empty-state"><p>👆 Add tasks and click "Analyze" to see prioritized results</p></div>';
+        return;
+    }
+
+    // Calculate median importance for splitting
+    const importanceValues = list.map(t => t.components.importance).sort((a, b) => a - b);
+    const urgencyValues = list.map(t => t.components.urgency).sort((a, b) => a - b);
+    
+    const importanceMedian = importanceValues[Math.floor(importanceValues.length / 2)] || 0.5;
+    const urgencyMedian = urgencyValues[Math.floor(urgencyValues.length / 2)] || 0.5;
+
+    // Categorize tasks
+    const quadrants = {
+        urgentImportant: [],
+        notUrgentImportant: [],
+        urgentNotImportant: [],
+        notUrgentNotImportant: []
+    };
+
+    list.forEach(t => {
+        const isUrgent = t.components.urgency >= urgencyMedian;
+        const isImportant = t.components.importance >= importanceMedian;
+
+        if (isUrgent && isImportant) {
+            quadrants.urgentImportant.push(t);
+        } else if (!isUrgent && isImportant) {
+            quadrants.notUrgentImportant.push(t);
+        } else if (isUrgent && !isImportant) {
+            quadrants.urgentNotImportant.push(t);
+        } else {
+            quadrants.notUrgentNotImportant.push(t);
+        }
+    });
+
+    const matrixHTML = `
+        <div class="matrix-container">
+            <div class="matrix-quadrant urgent-important">
+                <h3>🔥 Do First (Urgent & Important)</h3>
+                ${renderMatrixTasks(quadrants.urgentImportant)}
+            </div>
+            <div class="matrix-quadrant not-urgent-important">
+                <h3>📅 Schedule (Not Urgent & Important)</h3>
+                ${renderMatrixTasks(quadrants.notUrgentImportant)}
+            </div>
+            <div class="matrix-quadrant urgent-not-important">
+                <h3>👥 Delegate (Urgent & Not Important)</h3>
+                ${renderMatrixTasks(quadrants.urgentNotImportant)}
+            </div>
+            <div class="matrix-quadrant not-urgent-not-important">
+                <h3>🗑️ Eliminate (Not Urgent & Not Important)</h3>
+                ${renderMatrixTasks(quadrants.notUrgentNotImportant)}
+            </div>
+        </div>
+    `;
+
+    resEl.innerHTML = matrixHTML;
+}
+
+function renderMatrixTasks(tasks) {
+    if (!tasks.length) {
+        return '<p style="color: #a0a8b8; font-size: 0.85rem; margin-top: 8px;">No tasks in this quadrant</p>';
+    }
+
+    return tasks.map(t => `
+        <div class="matrix-task">
+            <strong>${t.title}</strong>
+            <span style="color: #a0a8b8;">Score: ${(t.score * 100).toFixed(0)}%</span>
+        </div>
+    `).join('');
+}
+
+// ==================== MATRIX VIEW TOGGLE ====================
+matrixViewCheckbox.addEventListener('change', () => {
+    if (currentResults.length > 0) {
+        renderResults(currentResults);
+    }
+});
+
+// ==================== INITIALIZE ====================
+renderTasks();
+updateTaskCount();

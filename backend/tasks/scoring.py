@@ -1,292 +1,385 @@
 # backend/tasks/scoring.py
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from math import log
-from typing import List, Dict, Tuple, Set
-import copy
 import json
+import copy
 
-# --- Helper functions -------------------------------------------------------
-
-def parse_date(datestr):
-    if not datestr:
-        return None
-    if isinstance(datestr, date):
-        return datestr
-    try:
-        return datetime.fromisoformat(datestr).date()
-    except Exception:
-        try:
-            return datetime.strptime(datestr, "%Y-%m-%d").date()
-        except Exception:
-            return None
+# -----------------------------
+# Utility Helpers
+# -----------------------------
 
 def clamp01(x):
+    """Clamp value between 0 and 1"""
     return max(0.0, min(1.0, float(x)))
 
-# --- Dependency utilities ---------------------------------------------------
 
-def build_graph(tasks: List[dict]) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
+def parse_date(value):
+    """Parse ISO date string into Python date object."""
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.fromisoformat(value).date()
+    except:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except:
+            return None
+
+
+# -----------------------------
+# Dependency Graph Building
+# -----------------------------
+
+def build_graph(tasks):
     """
-    Build graph where edge A->B means A is depended-on by B (i.e., B depends on A).
-    Return:
-      - dependents: node_id -> set(nodes that depend on node_id)
-      - dependencies: node_id -> set(nodes it depends on)
+    Build dependency graph from tasks.
+    
+    Returns:
+        dependents: {node -> set(nodes depending on it)}
+        dependencies: {node -> set(nodes it depends on)}
     """
     id_map = {}
     for idx, t in enumerate(tasks):
         tid = str(t.get("id", idx))
         id_map[tid] = t
 
-    dependencies = {tid: set() for tid in id_map}
     dependents = {tid: set() for tid in id_map}
+    dependencies = {tid: set() for tid in id_map}
 
     for idx, t in enumerate(tasks):
         tid = str(t.get("id", idx))
-        raw_deps = t.get("dependencies", []) or []
-        if isinstance(raw_deps, str):
+        deps = t.get("dependencies", []) or []
+
+        # Handle string-encoded JSON dependencies
+        if isinstance(deps, str):
             try:
-                raw_deps = json.loads(raw_deps)
-            except Exception:
-                raw_deps = [raw_deps]
-        for dep in raw_deps:
-            depid = str(dep)
-            if depid not in id_map:
-                # ignore missing dependency (caller will receive a warning)
-                continue
-            dependencies[tid].add(depid)
-            dependents[depid].add(tid)
+                deps = json.loads(deps)
+                if not isinstance(deps, list):
+                    deps = [deps]
+            except:
+                deps = [deps] if deps else []
+
+        for d in deps:
+            d = str(d)
+            if d in id_map:
+                dependencies[tid].add(d)
+                dependents[d].add(tid)
+
     return dependents, dependencies
 
-def detect_cycles_kahn(dependencies: Dict[str, Set[str]]) -> List[str]:
+
+def detect_cycles(dependencies: dict):
     """
-    Kahn's algorithm to detect cycles.
-    dependencies: node -> set(nodes it depends on)
-    returns list of node ids that are part of cycle (empty list if none)
+    Detect cycles using topological sort (Kahn's algorithm).
+    
+    Returns:
+        List of nodes involved in cycles. Empty list if no cycles.
     """
-    # compute in-degrees
-    nodes = set(dependencies.keys())
-    in_deg = {n: 0 for n in nodes}
-    graph = {n: set() for n in nodes}
-    for n, deps in dependencies.items():
+    graph = {n: set() for n in dependencies}
+    indegree = {n: 0 for n in dependencies}
+
+    # Build adjacency list and calculate in-degrees
+    for node, deps in dependencies.items():
         for d in deps:
-            graph[d].add(n)  # d -> n
-            in_deg[n] += 1
+            if d in graph:  # Only add edge if dependency exists
+                graph[d].add(node)
+                indegree[node] += 1
 
-    queue = [n for n, deg in in_deg.items() if deg == 0]
+    # Start with nodes that have no dependencies
+    queue = [n for n in dependencies if indegree[n] == 0]
     visited = 0
-    q_idx = 0
-    while q_idx < len(queue):
-        n = queue[q_idx]; q_idx += 1
+
+    while queue:
+        n = queue.pop(0)
         visited += 1
-        for m in graph[n]:
-            in_deg[m] -= 1
-            if in_deg[m] == 0:
-                queue.append(m)
+        for neighbor in graph[n]:
+            indegree[neighbor] -= 1
+            if indegree[neighbor] == 0:
+                queue.append(neighbor)
 
-    if visited == len(nodes):
-        return []  # no cycles
+    # If we didn't visit all nodes, there's a cycle
+    if visited == len(dependencies):
+        return []  # No cycle
+    
+    return [n for n, deg in indegree.items() if deg > 0]
 
-    # nodes with in_deg > 0 are part of cycles
-    cycle_nodes = [n for n, deg in in_deg.items() if deg > 0]
-    return cycle_nodes
 
-def compute_reachability_count(dependents: Dict[str, Set[str]]) -> Dict[str, float]:
+def compute_dependency_scores(dependents):
     """
-    For each node, compute how many tasks (directly or indirectly) it blocks.
-    Use DFS + memoization. Return raw counts.
+    Calculate how many tasks depend on each task (directly or indirectly).
+    Uses DFS with cycle protection.
+    
+    Args:
+        dependents: dict {task_id: set of tasks that depend on this task}
+    
+    Returns:
+        dict {task_id: normalized score between 0 and 1}
     """
-    memo = {}
+    # Early cycle detection to avoid infinite recursion
+    visited = set()
+    rec_stack = set()
 
-    def dfs(n, seen):
-        if n in memo:
-            return memo[n]
+    def has_cycle(node):
+        """DFS-based cycle detection"""
+        if node in rec_stack:
+            return True
+        if node in visited:
+            return False
+        
+        visited.add(node)
+        rec_stack.add(node)
+        
+        for neighbor in dependents.get(node, []):
+            if has_cycle(neighbor):
+                return True
+        
+        rec_stack.remove(node)
+        return False
+
+    # Check for cycles
+    for node in dependents.keys():
+        if has_cycle(node):
+            # If cycle detected, return zero scores for safety
+            return {k: 0.0 for k in dependents}
+    
+    # No cycles: safe to compute dependency scores
+    def count_dependents(node, memo=None):
+        """Count total tasks that depend on this node (directly + indirectly)"""
+        if memo is None:
+            memo = {}
+        
+        if node in memo:
+            return memo[node]
+        
         total = 0
-        for d in dependents.get(n, []):
-            if d in seen:
-                continue
-            seen.add(d)
-            total += 1
-            total += dfs(d, seen)
-        memo[n] = total
+        for dependent in dependents.get(node, []):
+            total += 1 + count_dependents(dependent, memo)
+        
+        memo[node] = total
         return total
 
-    counts = {}
-    for n in dependents:
-        counts[n] = dfs(n, set())
-    return counts
+    raw_scores = {n: count_dependents(n) for n in dependents}
+    max_val = max(raw_scores.values()) if raw_scores else 0
 
-# --- Scoring subcomponents --------------------------------------------------
+    if max_val == 0:
+        return {n: 0.0 for n in raw_scores}
 
-def importance_score(importance):
-    # Map 1..10 -> 0..1
+    # Log normalization for better score distribution
+    return {n: (log(1 + raw_scores[n]) / log(1 + max_val)) for n in raw_scores}
+
+
+# -----------------------------
+# Component Scores
+# -----------------------------
+
+def importance_score(x):
+    """
+    Normalize importance (1-10 scale) to 0-1 range.
+    """
     try:
-        i = int(importance)
-    except Exception:
-        i = 5
-    i = max(1, min(10, i))
-    return (i - 1) / 9.0
+        x = int(x)
+        x = max(1, min(10, x))
+    except:
+        x = 5
+    return (x - 1) / 9.0
 
-def effort_score(hours, max_effort=40.0):
-    # Lower hours -> higher score (quick wins get >)
+
+def effort_score(hours):
+    """
+    Calculate effort score. Lower effort = higher score (quick wins).
+    Uses logarithmic scaling to prevent extreme values.
+    """
     try:
-        h = float(hours)
-    except Exception:
-        h = 1.0
-    if h <= 0:
+        hours = float(hours)
+    except:
+        hours = 1.0
+
+    if hours <= 0:
         return 1.0
-    # Use inverse with log scaling to avoid huge drop for big numbers
-    v = 1.0 / (1.0 + log(1.0 + h))
-    # normalize roughly to range (0,1], but clamp
-    return clamp01(v)
 
-def urgency_score(due_date: date, today: date = None, horizon_days=30):
+    # Logarithmic decay: quick tasks get higher scores
+    return clamp01(1 / (1 + log(1 + hours)))
+
+
+def urgency_score(due_date, today=None, horizon=30):
+    """
+    Calculate urgency based on due date.
+    
+    Args:
+        due_date: Task due date
+        today: Reference date (defaults to today)
+        horizon: Days in future beyond which urgency is 0
+    
+    Returns:
+        Score between 0 and 1 (higher = more urgent)
+        Past-due tasks get boosted scores (>1.0 capped at ~1.8)
+    """
     if today is None:
         today = date.today()
+
     if due_date is None:
-        # no due date = low urgency
         return 0.0
-    delta = (due_date - today).days
-    if delta < 0:
-        # past-due -> urgency boost (cap added)
-        boost = min(0.8, abs(delta) / 30.0)  # max boost 0.8
-        return clamp01(1.0 + boost)
-    # within horizon -> linear decay
-    if delta >= horizon_days:
+
+    diff = (due_date - today).days
+
+    # Past due: exponentially increase urgency
+    if diff < 0:
+        overdue_boost = min(0.8, abs(diff) / 30)
+        return clamp01(1.0 + overdue_boost)
+
+    # Far future: no urgency
+    if diff >= horizon:
         return 0.0
-    return clamp01(1.0 - (delta / horizon_days))
 
-def dependency_score(raw_counts: Dict[str, float]):
-    # raw_counts is integer counts, normalize using log scale
-    if not raw_counts:
-        return {}
-    max_count = max(raw_counts.values())
-    scores = {}
-    for k, c in raw_counts.items():
-        if c <= 0:
-            scores[k] = 0.0
-        else:
-            # use log to dampen
-            scores[k] = clamp01(log(1 + c) / (log(1 + max_count) if max_count > 0 else 1))
-    return scores
+    # Linear decay within horizon
+    return clamp01(1 - (diff / horizon))
 
-# --- Strategy weights ------------------------------------------------------
 
-DEFAULT_WEIGHTS = {
-    "smart": {"w_u": 0.30, "w_i": 0.35, "w_e": 0.20, "w_d": 0.15},
-    "fastest": {"w_u": 0.15, "w_i": 0.10, "w_e": 0.60, "w_d": 0.15},
-    "high_impact": {"w_u": 0.15, "w_i": 0.70, "w_e": 0.05, "w_d": 0.10},
-    "deadline": {"w_u": 0.70, "w_i": 0.15, "w_e": 0.10, "w_d": 0.05},
+# -----------------------------
+# Strategy Weights
+# -----------------------------
+
+WEIGHTS = {
+    "smart": {
+        "w_u": 0.30,  # Urgency
+        "w_i": 0.35,  # Importance
+        "w_e": 0.20,  # Effort
+        "w_d": 0.15   # Dependencies
+    },
+    "fastest": {
+        "w_u": 0.15,
+        "w_i": 0.10,
+        "w_e": 0.60,  # Heavy emphasis on low effort
+        "w_d": 0.15
+    },
+    "high_impact": {
+        "w_u": 0.10,
+        "w_i": 0.70,  # Heavy emphasis on importance
+        "w_e": 0.10,
+        "w_d": 0.10
+    },
+    "deadline": {
+        "w_u": 0.70,  # Heavy emphasis on due dates
+        "w_i": 0.15,
+        "w_e": 0.10,
+        "w_d": 0.05
+    },
 }
 
-# --- Main analyze function -------------------------------------------------
 
-def analyze_tasks(tasks: List[dict], strategy: str = "smart", today: date = None) -> dict:
+# -----------------------------
+# Main Analyze Function
+# -----------------------------
+
+def analyze_tasks(tasks, strategy="smart", today=None):
     """
-    Input: tasks list of dicts (each may have id/title/due_date/estimated_hours/importance/dependencies)
-    Output: dict with:
-        - tasks: list of tasks enriched with score (0..1), priority label, explanation, component scores
-        - warnings: list of warnings (missing dependencies, cycles, invalid fields)
+    Analyze and prioritize tasks based on multiple factors.
+    
+    Args:
+        tasks: List of task dictionaries
+        strategy: Prioritization strategy ('smart', 'fastest', 'high_impact', 'deadline')
+        today: Reference date for urgency calculation
+    
+    Returns:
+        dict with 'tasks' (sorted list) and 'warnings' (list of issues)
     """
     if today is None:
         today = date.today()
-    # shallow copy to avoid mutation
-    tasks_in = copy.deepcopy(tasks or [])
-    # assign ids for tasks without id
-    for idx, t in enumerate(tasks_in):
-        if "id" not in t:
-            t["id"] = f"__auto_{idx}"
 
-    # Build graphs
-    dependents, dependencies = build_graph(tasks_in)
-    cycle_nodes = detect_cycles_kahn(dependencies)
-    reach_counts = compute_reachability_count(dependents)
-    dep_scores = dependency_score(reach_counts)
-
+    tasks = copy.deepcopy(tasks)
     warnings = []
+
+    # Assign missing IDs
+    for idx, t in enumerate(tasks):
+        t.setdefault("id", f"task_{idx}")
+
+    # Build dependency graph
+    dependents, dependencies = build_graph(tasks)
+    cycle_nodes = detect_cycles(dependencies)
+    dep_scores = compute_dependency_scores(dependents)
+
     if cycle_nodes:
-        warnings.append(f"circular_dependency_nodes: {cycle_nodes}")
+        warnings.append(f"⚠️ Circular dependency detected involving: {', '.join(cycle_nodes)}")
 
-    # collect missing deps
-    ids_present = {str(t["id"]) for t in tasks_in}
-    for t in tasks_in:
-        raw_deps = t.get("dependencies", []) or []
-        if isinstance(raw_deps, str):
-            try:
-                raw_deps = json.loads(raw_deps)
-            except Exception:
-                raw_deps = [raw_deps]
-        for dep in raw_deps:
-            if str(dep) not in ids_present:
-                warnings.append(f"task {t.get('id')} dependency {dep} missing")
-
-    weights = DEFAULT_WEIGHTS.get(strategy, DEFAULT_WEIGHTS["smart"])
-    w_u, w_i, w_e, w_d = weights["w_u"], weights["w_i"], weights["w_e"], weights["w_d"]
+    # Get strategy weights
+    weight = WEIGHTS.get(strategy, WEIGHTS["smart"])
 
     results = []
-    for t in tasks_in:
+
+    for t in tasks:
         tid = str(t["id"])
-        title = t.get("title", f"Task {tid}")
         due = parse_date(t.get("due_date"))
-        imp = t.get("importance", 5)
-        est = t.get("estimated_hours", 1)
+        
+        # Calculate component scores
+        imp = importance_score(t.get("importance", 5))
+        eff = effort_score(t.get("estimated_hours", 1))
+        urg = urgency_score(due, today)
+        dep = dep_scores.get(tid, 0.0)
 
-        U = urgency_score(due, today)
-        I = importance_score(imp)
-        E = effort_score(est)
-        D = dep_scores.get(tid, 0.0)
+        # Calculate weighted final score
+        score = (
+            weight["w_u"] * urg +
+            weight["w_i"] * imp +
+            weight["w_e"] * eff +
+            weight["w_d"] * dep
+        )
 
-        score_raw = w_u * U + w_i * I + w_e * E + w_d * D
-
-        # if in cycle, add warning and slightly deprioritize (multiplier)
+        # Apply cycle penalty
         in_cycle = tid in cycle_nodes
         if in_cycle:
-            warnings.append(f"task {tid} is in a circular dependency")
-            score_raw *= 0.85  # slight penalty to force human attention to resolve
+            score *= 0.85  # 15% penalty for circular dependencies
 
-        score = clamp01(score_raw)
-
-        # priority label
+        # Priority label based on score
         if score >= 0.75:
             label = "High"
-        elif score >= 0.5:
+        elif score >= 0.50:
             label = "Medium"
         else:
             label = "Low"
 
-        # explanation
+        # Generate human-readable explanation
         explanation = []
-        # urgency wording
+
         if due is None:
-            explanation.append("No due date (low urgency)")
+            explanation.append("No due date set")
         else:
             days = (due - today).days
             if days < 0:
-                explanation.append(f"Past due by {abs(days)} days (urgent boost)")
+                explanation.append(f"⚠️ Past due by {abs(days)} day{'s' if abs(days) != 1 else ''}")
+            elif days == 0:
+                explanation.append("Due TODAY")
+            elif days == 1:
+                explanation.append("Due tomorrow")
             else:
-                explanation.append(f"Due in {days} day(s)")
+                explanation.append(f"Due in {days} days")
 
-        explanation.append(f"Importance {int(imp)}/10")
-        explanation.append(f"Effort ≈ {est} hour(s)")
-        if reach_counts.get(tid, 0) > 0:
-            explanation.append(f"Blocks {int(reach_counts.get(tid,0))} task(s)")
-
-        explanation_text = "; ".join(explanation)
+        explanation.append(f"Importance: {t.get('importance', 5)}/10")
+        explanation.append(f"Effort: {t.get('estimated_hours', 1)}h")
+        
+        dependent_count = len(dependents.get(tid, set()))
+        if dependent_count > 0:
+            explanation.append(f"Blocks {dependent_count} task{'s' if dependent_count != 1 else ''}")
 
         results.append({
-            "id": tid,
-            "title": title,
-            "due_date": due.isoformat() if due else None,
-            "estimated_hours": est,
-            "importance": int(imp) if isinstance(imp, (int, float)) else imp,
-            "dependencies": list(dependencies.get(tid, [])) if dependencies.get(tid) else [],
+            **t,
             "score": round(score, 4),
             "priority": label,
-            "components": {"urgency": round(U, 4), "importance": round(I, 4), "effort": round(E, 4), "dependency": round(D, 4)},
-            "explanation": explanation_text,
+            "components": {
+                "urgency": round(urg, 4),
+                "importance": round(imp, 4),
+                "effort": round(eff, 4),
+                "dependency": round(dep, 4),
+            },
+            "explanation": " • ".join(explanation),
             "in_cycle": in_cycle
         })
 
-    # sort by score desc
+    # Sort by score (descending)
     results.sort(key=lambda x: x["score"], reverse=True)
 
-    return {"tasks": results, "warnings": list(dict.fromkeys(warnings))}  # remove dupes
+    return {
+        "tasks": results,
+        "warnings": warnings
+    }

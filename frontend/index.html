@@ -1,56 +1,127 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Smart Task Analyzer</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8">
+    <title>Smart Task Analyzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
-    <h1>Smart Task Analyzer</h1>
 
-    <section class="input-card">
-      <h2>Add Task</h2>
-      <form id="task-form">
-        <input id="title" placeholder="Title" required />
-        <input id="due_date" type="date" />
-        <input id="estimated_hours" type="number" min="0" step="0.5" placeholder="Estimated hours" />
-        <input id="importance" type="number" min="1" max="10" value="5" placeholder="Importance (1-10)" />
-        <input id="dependencies" placeholder="Dependencies (comma separated ids)" />
-        <button type="button" id="add-task">Add to list</button>
-      </form>
+<div class="container">
+    <header class="header">
+        <h1>📊 Smart Task Analyzer</h1>
+        <p class="subtitle">Intelligent task prioritization powered by multi-factor scoring</p>
+    </header>
 
-      <h3>Bulk JSON</h3>
-      <textarea id="bulk-json" placeholder='[{"id":"t1","title":"Fix bug","due_date":"2025-11-30","estimated_hours":3,"importance":8}]'></textarea>
+    <!-- INPUT PANEL -->
+    <div class="panel input-panel">
+        <h2>📝 Task Input</h2>
 
-      <div class="controls">
-        <label for="strategy">Strategy:</label>
-        <select id="strategy">
-          <option value="smart">Smart Balance</option>
-          <option value="fastest">Fastest Wins</option>
-          <option value="high_impact">High Impact</option>
-          <option value="deadline">Deadline Driven</option>
-        </select>
-        <button id="analyze">Analyze Tasks</button>
-        <button id="suggest">Suggest Top 3</button>
-      </div>
+        <div class="form-section">
+            <h3>Add Task Manually</h3>
+            <form id="task-form">
+                <div class="form-row">
+                    <div class="form-group full">
+                        <label for="title">Task Title *</label>
+                        <input id="title" placeholder="e.g., Fix login bug" required>
+                    </div>
+                </div>
 
-      <div id="local-list">
-        <h3>Local Tasks</h3>
-        <ol id="task-list"></ol>
-        <button id="clear-list">Clear</button>
-      </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="due">Due Date</label>
+                        <input id="due" type="date">
+                    </div>
+                    <div class="form-group">
+                        <label for="hours">Estimated Hours</label>
+                        <input id="hours" type="number" min="0" step="0.5" placeholder="1" value="1">
+                    </div>
+                </div>
 
-      <div id="messages"></div>
-    </section>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="importance">Importance (1-10)</label>
+                        <input id="importance" type="number" min="1" max="10" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="deps">Dependencies</label>
+                        <input id="deps" placeholder="task_0, task_1">
+                    </div>
+                </div>
 
-    <section class="output-card">
-      <h2>Results</h2>
-      <div id="results"></div>
-    </section>
-  </div>
+                <button type="button" id="add-task" class="btn btn-primary">+ Add Task</button>
+            </form>
+        </div>
 
-  <script src="script.js"></script>
+        <div class="divider">
+            <span>OR</span>
+        </div>
+
+        <div class="form-section">
+            <h3>Paste JSON Array</h3>
+            <textarea id="json-input" rows="4" placeholder='[{"title":"Fix bug","due_date":"2025-12-30","estimated_hours":3,"importance":8,"dependencies":[]}]'></textarea>
+        </div>
+
+        <div class="task-list-section">
+            <div class="section-header">
+                <h3>📋 Current Tasks (<span id="task-count">0</span>)</h3>
+                <button id="clear" class="btn btn-secondary btn-sm">Clear All</button>
+            </div>
+            <ul id="task-list" class="task-list"></ul>
+        </div>
+
+        <div id="messages" class="message"></div>
+    </div>
+
+    <!-- CONTROL PANEL -->
+    <div class="panel control-panel">
+        <h2>⚙️ Analysis Controls</h2>
+        
+        <div class="form-group">
+            <label for="strategy">Sorting Strategy</label>
+            <select id="strategy">
+                <option value="smart">🎯 Smart Balance (Recommended)</option>
+                <option value="fastest">⚡ Fastest Wins (Low effort first)</option>
+                <option value="high_impact">💎 High Impact (Importance first)</option>
+                <option value="deadline">⏰ Deadline Driven (Urgency first)</option>
+            </select>
+        </div>
+
+        <div class="strategy-info" id="strategy-info">
+            <p><strong>Smart Balance:</strong> Optimally weighs urgency, importance, effort, and dependencies for well-rounded prioritization.</p>
+        </div>
+
+        <div class="action-buttons">
+            <button id="analyze" class="btn btn-accent">
+                <span class="btn-text">🔍 Analyze All Tasks</span>
+                <span class="spinner" style="display:none;">⏳</span>
+            </button>
+            <button id="suggest" class="btn btn-success">
+                <span class="btn-text">✨ Suggest Top 3</span>
+                <span class="spinner" style="display:none;">⏳</span>
+            </button>
+        </div>
+
+        <div class="view-controls">
+            <label class="toggle-label">
+                <input type="checkbox" id="matrix-view">
+                <span>Eisenhower Matrix View</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- OUTPUT PANEL -->
+    <div class="panel results-panel">
+        <h2>📈 Results</h2>
+        <div id="results" class="results-container">
+            <div class="empty-state">
+                <p>👆 Add tasks and click "Analyze" to see prioritized results</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="script.js"></script>
 </body>
 </html>
